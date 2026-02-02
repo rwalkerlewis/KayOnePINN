@@ -154,9 +154,10 @@ class HelmholtzPINN:
     def __init__(
         self,
         domain_size: Tuple[float, float] = (-5.0, 5.0),
-        omega: float = 0.5,
+        omega: float = 1.5,
         source_position: Tuple[float, float] = (0.0, 0.0),
-        source_width: float = 0.2,
+        source_width: float = 0.1,
+        source_amplitude: float = 10.0,
         use_dielectric: bool = True,
         dielectric_center: Tuple[float, float] = (0.0, 0.0),
         dielectric_radius: float = 1.5,
@@ -166,9 +167,10 @@ class HelmholtzPINN:
         """
         Args:
             domain_size: (min, max) for both x and y
-            omega: Angular frequency
+            omega: Angular frequency (higher = shorter wavelength, more ripples)
             source_position: (x, y) position of point source
-            source_width: Width of Gaussian source
+            source_width: Width of Gaussian source (smaller = more point-like)
+            source_amplitude: Amplitude of source
             use_dielectric: Whether to include dielectric circle
             dielectric_center: Center of dielectric circle
             dielectric_radius: Radius of dielectric circle
@@ -179,26 +181,32 @@ class HelmholtzPINN:
         self.omega = omega
         self.source_position = torch.tensor(source_position, device=device)
         self.source_width = source_width
+        self.source_amplitude = source_amplitude
         self.use_dielectric = use_dielectric
         self.dielectric_center = torch.tensor(dielectric_center, device=device)
         self.dielectric_radius = dielectric_radius
         self.dielectric_eps = dielectric_eps
         self.device = device
         
-        # Create the SIREN network
+        # Wavenumber for reference
+        self.k0 = omega  # k = omega * sqrt(eps), in free space sqrt(eps)=1
+        self.wavelength = 2 * np.pi / self.k0
+        
+        # Create the SIREN network with appropriate frequency for wave patterns
+        siren_omega = max(30.0, 5 * omega)
         self.model = SIREN(
             in_features=2,
             out_features=2,
-            hidden_features=256,
-            hidden_layers=5,
-            omega_0=30.0,
-            omega_hidden=30.0
+            hidden_features=128,  # Smaller for faster training
+            hidden_layers=4,
+            omega_0=siren_omega,
+            omega_hidden=siren_omega
         ).to(device)
         
-        # Optimizer
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-4)
+        # Optimizer with higher learning rate
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=2e-3)
         self.scheduler = torch.optim.lr_scheduler.StepLR(
-            self.optimizer, step_size=2000, gamma=0.5
+            self.optimizer, step_size=1500, gamma=0.5
         )
     
     def get_permittivity(self, coords: torch.Tensor) -> torch.Tensor:
@@ -240,24 +248,88 @@ class HelmholtzPINN:
             (coords[:, 0] - self.source_position[0])**2 + 
             (coords[:, 1] - self.source_position[1])**2
         )
-        # Gaussian source
+        # Gaussian source - tighter for more point-like behavior
         source = torch.exp(-dist_sq / (2 * self.source_width**2))
-        # Normalize
-        source = source / (2 * np.pi * self.source_width**2)
+        # Apply amplitude
+        source = self.source_amplitude * source / (2 * np.pi * self.source_width**2)
         return source
     
     def compute_derivatives(
         self, 
-        coords: torch.Tensor
+        coords: torch.Tensor,
+        use_finite_diff: bool = True
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Compute Ez and its spatial derivatives using automatic differentiation.
+        Compute Ez and its spatial derivatives.
         
         Args:
-            coords: Tensor of shape (N, 2) with requires_grad=True
+            coords: Tensor of shape (N, 2)
+            use_finite_diff: If True, use finite differences for Laplacian (faster on CPU)
             
         Returns:
             Ez_real, Ez_imag, laplacian_real, laplacian_imag, grad_Ez
+        """
+        if use_finite_diff:
+            return self._compute_derivatives_fd(coords)
+        else:
+            return self._compute_derivatives_autodiff(coords)
+    
+    def _compute_derivatives_fd(
+        self,
+        coords: torch.Tensor,
+        h: float = 0.02
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Compute derivatives using finite differences (faster on CPU).
+        Gradients flow through all network evaluations for training.
+        """
+        # Evaluate at center and offset points (keep gradients for backprop)
+        Ez_center = self.model(coords)
+        
+        # Offset points for finite differences
+        coords_px = coords.clone()
+        coords_px[:, 0] = coords_px[:, 0] + h
+        coords_mx = coords.clone()
+        coords_mx[:, 0] = coords_mx[:, 0] - h
+        coords_py = coords.clone()
+        coords_py[:, 1] = coords_py[:, 1] + h
+        coords_my = coords.clone()
+        coords_my[:, 1] = coords_my[:, 1] - h
+        
+        Ez_px = self.model(coords_px)
+        Ez_mx = self.model(coords_mx)
+        Ez_py = self.model(coords_py)
+        Ez_my = self.model(coords_my)
+        
+        Ez_real = Ez_center[:, 0]
+        Ez_imag = Ez_center[:, 1]
+        
+        # First derivatives (central difference)
+        dEz_real_dx = (Ez_px[:, 0] - Ez_mx[:, 0]) / (2 * h)
+        dEz_real_dy = (Ez_py[:, 0] - Ez_my[:, 0]) / (2 * h)
+        dEz_imag_dx = (Ez_px[:, 1] - Ez_mx[:, 1]) / (2 * h)
+        dEz_imag_dy = (Ez_py[:, 1] - Ez_my[:, 1]) / (2 * h)
+        
+        # Second derivatives (central difference for Laplacian)
+        d2Ez_real_dx2 = (Ez_px[:, 0] - 2*Ez_center[:, 0] + Ez_mx[:, 0]) / (h * h)
+        d2Ez_real_dy2 = (Ez_py[:, 0] - 2*Ez_center[:, 0] + Ez_my[:, 0]) / (h * h)
+        d2Ez_imag_dx2 = (Ez_px[:, 1] - 2*Ez_center[:, 1] + Ez_mx[:, 1]) / (h * h)
+        d2Ez_imag_dy2 = (Ez_py[:, 1] - 2*Ez_center[:, 1] + Ez_my[:, 1]) / (h * h)
+        
+        laplacian_real = d2Ez_real_dx2 + d2Ez_real_dy2
+        laplacian_imag = d2Ez_imag_dx2 + d2Ez_imag_dy2
+        
+        grad_real = torch.stack([dEz_real_dx, dEz_real_dy], dim=1)
+        grad_imag = torch.stack([dEz_imag_dx, dEz_imag_dy], dim=1)
+        
+        return Ez_real, Ez_imag, laplacian_real, laplacian_imag, (grad_real, grad_imag)
+    
+    def _compute_derivatives_autodiff(
+        self, 
+        coords: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Compute derivatives using automatic differentiation (more accurate, slower on CPU).
         """
         coords.requires_grad_(True)
         
@@ -389,6 +461,7 @@ class HelmholtzPINN:
     
     def sample_domain(self, n_points: int) -> torch.Tensor:
         """Sample random points in the domain."""
+        # Simple uniform sampling for speed
         coords = torch.rand(n_points, 2, device=self.device)
         coords = coords * (self.domain_size[1] - self.domain_size[0]) + self.domain_size[0]
         return coords
@@ -476,8 +549,9 @@ class HelmholtzPINN:
         """
         print(f"Training PINN on {self.device}")
         print(f"Domain: [{self.domain_size[0]}, {self.domain_size[1]}]²")
-        print(f"Omega: {self.omega}")
-        print(f"Wavelength: {2*np.pi/self.omega:.2f}")
+        print(f"Omega: {self.omega}, k0: {self.k0:.2f}")
+        print(f"Wavelength: {self.wavelength:.2f}")
+        print(f"Source at: ({self.source_position[0].item():.1f}, {self.source_position[1].item():.1f})")
         print(f"Dielectric: {self.use_dielectric} (eps={self.dielectric_eps}, r={self.dielectric_radius})")
         print("-" * 60)
         
@@ -775,15 +849,18 @@ def main():
     torch.manual_seed(42)
     np.random.seed(42)
     
-    # Configuration
+    # Configuration for clear wave ripples
+    # Higher omega = shorter wavelength = more visible ripples
+    # Domain should contain several wavelengths
     config = {
-        "domain_size": (-6.0, 6.0),  # Domain: [-6, 6] x [-6, 6]
-        "omega": 0.8,  # Angular frequency (wavelength ~7.85)
-        "source_position": (-3.0, 0.0),  # Source position (off-center)
-        "source_width": 0.15,  # Gaussian source width
+        "domain_size": (-5.0, 5.0),  # Domain: [-5, 5] x [-5, 5]
+        "omega": 1.8,  # Frequency for visible ripples (wavelength ~3.5)
+        "source_position": (-2.0, 1.5),  # Source position (off-center, upper left)
+        "source_width": 0.1,  # Tight Gaussian for point-like source
+        "source_amplitude": 10.0,  # Strong source
         "use_dielectric": True,  # Include dielectric circle
-        "dielectric_center": (1.5, 0.0),  # Center of dielectric
-        "dielectric_radius": 1.5,  # Radius of dielectric
+        "dielectric_center": (0.5, -0.5),  # Center of dielectric (offset)
+        "dielectric_radius": 1.2,  # Radius of dielectric
         "dielectric_eps": 2.0,  # Permittivity of dielectric
     }
     
@@ -793,17 +870,23 @@ def main():
     print(f"Configuration:")
     for key, value in config.items():
         print(f"  {key}: {value}")
+    
+    wavelength = 2 * np.pi / config["omega"]
+    domain_span = config["domain_size"][1] - config["domain_size"][0]
+    n_wavelengths = domain_span / wavelength
+    print(f"\n  Wavelength: {wavelength:.2f}")
+    print(f"  Number of wavelengths in domain: {n_wavelengths:.1f}")
     print("=" * 60)
     
     # Create PINN
     pinn = HelmholtzPINN(**config)
     
-    # Training parameters
+    # Training parameters (optimized for CPU)
     train_config = {
-        "n_iterations": 15000,
-        "n_domain": 5000,
-        "n_boundary": 1000,
-        "lambda_bc": 10.0,
+        "n_iterations": 5000,
+        "n_domain": 1500,
+        "n_boundary": 500,
+        "lambda_bc": 5.0,
         "log_every": 100
     }
     
@@ -812,8 +895,8 @@ def main():
     
     # Plot results
     print("\nGenerating visualizations...")
-    plot_results(pinn, history, resolution=250, save_path="helmholtz_results.png")
-    plot_wave_propagation(pinn, n_frames=8, resolution=250, save_path="wave_propagation.png")
+    plot_results(pinn, history, resolution=256, save_path="helmholtz_results.png")
+    plot_wave_propagation(pinn, n_frames=8, resolution=256, save_path="wave_propagation.png")
     
     print("\nTraining complete!")
     print(f"Final loss: {history['total'][-1]:.2e}")

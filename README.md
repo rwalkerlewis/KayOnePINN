@@ -20,9 +20,9 @@ Where:
 
 - **SIREN Architecture**: Uses sinusoidal activation functions ideal for representing wave phenomena
 - **Complex Field Representation**: Outputs both real and imaginary parts of the electric field
-- **Dielectric Support**: Includes a configurable dielectric circle with smooth boundary
+- **Dielectric Support**: Includes a configurable dielectric circle with smooth boundary (bonus feature)
 - **Open Boundaries**: Implements Sommerfeld radiation condition for non-reflecting boundaries
-- **Automatic Differentiation**: Computes spatial derivatives using PyTorch autograd
+- **Finite Difference Derivatives**: Fast Laplacian computation via finite differences
 
 ## Installation
 
@@ -32,13 +32,31 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Quick Start
+### Quick Demo (CPU-friendly)
+
+For a fast demonstration on CPU:
+
+```bash
+python demo_quick.py --iterations 2000 --omega 1.0
+```
+
+Options:
+- `--iterations`: Training iterations (default: 2000)
+- `--omega`: Wave frequency, higher = more ripples (default: 1.0)
+- `--no-dielectric`: Disable dielectric circle
+- `--output`: Output image path
+
+### Full Training (GPU recommended)
+
+For best results with clear wave ripples, use GPU:
 
 ```bash
 python pinn_helmholtz.py
 ```
 
-This will train the PINN with default settings and generate visualization plots.
+**Note**: Full training on CPU is slow (~1-2 seconds/iteration). For production results:
+- Use a CUDA-enabled GPU (10-50x faster)
+- Or reduce `n_domain` and `n_boundary` for faster CPU training
 
 ### Custom Configuration
 
@@ -47,22 +65,23 @@ from pinn_helmholtz import HelmholtzPINN, plot_results, plot_wave_propagation
 
 # Create PINN with custom settings
 pinn = HelmholtzPINN(
-    domain_size=(-6.0, 6.0),     # Simulation domain
-    omega=0.8,                    # Angular frequency
-    source_position=(-3.0, 0.0),  # Point source location
-    source_width=0.15,            # Gaussian source width
-    use_dielectric=True,          # Enable dielectric circle
-    dielectric_center=(1.5, 0.0), # Dielectric center
-    dielectric_radius=1.5,        # Dielectric radius
-    dielectric_eps=2.0,           # Dielectric permittivity
+    domain_size=(-5.0, 5.0),      # Simulation domain
+    omega=1.5,                     # Angular frequency (higher = shorter wavelength)
+    source_position=(-2.0, 1.0),   # Point source location
+    source_width=0.1,              # Gaussian source width
+    source_amplitude=10.0,         # Source strength
+    use_dielectric=True,           # Enable dielectric circle
+    dielectric_center=(0.5, -0.5), # Dielectric center
+    dielectric_radius=1.2,         # Dielectric radius
+    dielectric_eps=2.0,            # Dielectric permittivity
 )
 
 # Train
 history = pinn.train(
-    n_iterations=15000,
-    n_domain=5000,
-    n_boundary=1000,
-    lambda_bc=10.0,
+    n_iterations=5000,
+    n_domain=1500,
+    n_boundary=500,
+    lambda_bc=5.0,
 )
 
 # Visualize
@@ -74,7 +93,7 @@ plot_wave_propagation(pinn)
 
 ```python
 pinn = HelmholtzPINN(
-    omega=0.5,
+    omega=1.5,
     source_position=(0.0, 0.0),
     use_dielectric=False,
 )

@@ -20,15 +20,16 @@ def test_basic_functionality():
     torch.manual_seed(42)
     np.random.seed(42)
     
-    # Test 1: Create PINN
+    # Test 1: Create PINN with higher frequency for visible waves
     print("\n[Test 1] Creating PINN model...")
     pinn = HelmholtzPINN(
         domain_size=(-5.0, 5.0),
-        omega=0.6,
-        source_position=(-2.0, 0.0),
-        source_width=0.2,
+        omega=1.5,  # Higher frequency for visible ripples
+        source_position=(-2.0, 1.0),
+        source_width=0.1,
+        source_amplitude=8.0,
         use_dielectric=True,
-        dielectric_center=(1.0, 0.0),
+        dielectric_center=(0.5, -0.5),
         dielectric_radius=1.2,
         dielectric_eps=2.0,
     )
@@ -93,14 +94,14 @@ def test_basic_functionality():
     print(f"   Loss after 1 step: total={total:.4e}, physics={phys:.4e}, bc={bc:.4e}")
     print("   PASSED")
     
-    # Test 9: Short training run
-    print("\n[Test 9] Running short training (500 iterations)...")
+    # Test 9: Short training run - optimized for CPU
+    print("\n[Test 9] Running training (800 iterations)...")
     history = pinn.train(
-        n_iterations=500,
-        n_domain=2000,
-        n_boundary=500,
-        lambda_bc=10.0,
-        log_every=100
+        n_iterations=800,
+        n_domain=1500,
+        n_boundary=400,
+        lambda_bc=5.0,
+        log_every=200
     )
     assert len(history["total"]) == 500
     print(f"   Final loss: {history['total'][-1]:.4e}")
@@ -119,8 +120,8 @@ def test_basic_functionality():
     # Test 11: Visualization
     print("\n[Test 11] Testing visualization...")
     try:
-        plot_results(pinn, history, resolution=100, save_path="test_helmholtz_results.png")
-        plot_wave_propagation(pinn, n_frames=8, resolution=100, save_path="test_wave_propagation.png")
+        plot_results(pinn, history, resolution=200, save_path="test_helmholtz_results.png")
+        plot_wave_propagation(pinn, n_frames=8, resolution=200, save_path="test_wave_propagation.png")
         print("   Figures saved successfully")
         print("   PASSED")
     except Exception as e:
@@ -144,9 +145,10 @@ def test_free_space():
     
     pinn = HelmholtzPINN(
         domain_size=(-5.0, 5.0),
-        omega=0.5,
+        omega=1.5,
         source_position=(0.0, 0.0),
-        source_width=0.2,
+        source_width=0.1,
+        source_amplitude=8.0,
         use_dielectric=False,
     )
     
@@ -157,8 +159,8 @@ def test_free_space():
     print(f"   Permittivity: constant at {eps[0].item()}")
     
     # Quick training
-    print("   Running 200 iterations...")
-    history = pinn.train(n_iterations=200, n_domain=1000, n_boundary=200, log_every=100)
+    print("   Running 300 iterations...")
+    history = pinn.train(n_iterations=300, n_domain=2000, n_boundary=500, log_every=150)
     print(f"   Final loss: {history['total'][-1]:.4e}")
     
     print("   PASSED")
