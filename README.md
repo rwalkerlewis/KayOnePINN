@@ -153,10 +153,63 @@ The simulation shows:
 | `n_iterations` | Training iterations | 10000 - 20000 |
 | `n_domain` | Collocation points per iteration | 4000 - 8000 |
 
+## Torchdiffeq GPU Example
+
+This repository also includes an example demonstrating how to use `torchdiffeq` with GPU acceleration for learning dynamical systems using Neural ODEs.
+
+### Usage
+
+```bash
+# Learn a damped harmonic oscillator
+python torchdiffeq_gpu_example.py --system oscillator --epochs 500
+
+# Learn the Lorenz attractor (chaotic system)
+python torchdiffeq_gpu_example.py --system lorenz --epochs 1000
+
+# Force CPU execution
+python torchdiffeq_gpu_example.py --system oscillator --cpu
+```
+
+### Features
+
+- **GPU Acceleration**: Automatically uses CUDA if available for faster training
+- **Adjoint Method**: Memory-efficient backpropagation through ODE solves
+- **Multiple Systems**: Damped harmonic oscillator and Lorenz attractor examples
+- **Configurable**: Supports different ODE solvers (`dopri5`, `rk4`, `euler`, etc.)
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--system` | Dynamical system (`oscillator`, `lorenz`) | `oscillator` |
+| `--epochs` | Training epochs | 500 |
+| `--lr` | Learning rate | 0.01 |
+| `--hidden` | Hidden layer dimension | 64 |
+| `--layers` | Number of hidden layers | 2 |
+| `--solver` | ODE solver | `dopri5` |
+| `--no-adjoint` | Disable adjoint method | False |
+| `--cpu` | Force CPU execution | False |
+
+### Output Files
+
+- `torchdiffeq_oscillator_results.png`: Results for the damped oscillator
+- `torchdiffeq_lorenz_results.png`: Results for the Lorenz system
+
+### Neural ODE Overview
+
+Neural ODEs learn continuous-time dynamics by parameterizing the derivative function with a neural network:
+
+```
+dx/dt = f_θ(t, x)
+```
+
+where `f_θ` is a neural network. Training uses the adjoint sensitivity method for memory-efficient gradient computation.
+
 ## References
 
 1. Sitzmann, V., et al. "Implicit Neural Representations with Periodic Activation Functions." NeurIPS 2020.
 2. Raissi, M., et al. "Physics-informed neural networks." Journal of Computational Physics, 2019.
+3. Chen, R. T. Q., et al. "Neural Ordinary Differential Equations." NeurIPS 2018.
 
 ## License
 
